@@ -13,8 +13,8 @@ from datetime import datetime
 load_dotenv()
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 NEWS_API_KEY = os.getenv("NEWS_API_KEY")
-SMTP_USER = os.getenv("SMTP_USER")       # ایمیل فرستنده
-SMTP_PASS = os.getenv("SMTP_PASS")       # رمز ایمیل فرستنده
+SMTP_USER = os.getenv("SMTP_USER")
+SMTP_PASS = os.getenv("SMTP_PASS")
 
 if not OPENAI_API_KEY:
     raise ValueError("OPENAI_API_KEY not set in .env")
@@ -112,7 +112,6 @@ def smart_news_email(req: NewsRequest):
 
     email_body += all_summaries
 
-    # Send the email
     send_email(subject=f"Daily News Summary - {date}", body=email_body, to_email=user_email)
 
     return {"status": "success", "message": f"News summary sent to {user_email}"}
