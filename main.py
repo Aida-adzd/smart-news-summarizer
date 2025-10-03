@@ -139,12 +139,10 @@ TOOLS_METADATA = {
     "smart_news_email": {"name": "smart_news_email", "description": "Fetch multiple topics, summarize, save HTML, and send email", "params_schema": SmartNewsEmailParams.schema()},
 }
 
-# ---------- Helper ----------
 def check_api_key(x_mcp_api_key: str):
     if not x_mcp_api_key or x_mcp_api_key != MCP_API_KEY:
         raise HTTPException(status_code=401, detail="Unauthorized")
 
-# ---------- Endpoints ----------
 @app.get("/mcp/registry")
 async def get_registry(x_mcp_api_key: str = Header(None)):
     check_api_key(x_mcp_api_key)
