@@ -1,96 +1,118 @@
 import os
 import json
 import requests
+import smtplib
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
 from fastapi import FastAPI
-from pydantic import BaseModel
+from pydantic import BaseModel, EmailStr
 from openai import OpenAI
 from dotenv import load_dotenv
+from datetime import datetime
 
 load_dotenv()
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 NEWS_API_KEY = os.getenv("NEWS_API_KEY")
+SMTP_USER = os.getenv("SMTP_USER")       # ایمیل فرستنده
+SMTP_PASS = os.getenv("SMTP_PASS")       # رمز ایمیل فرستنده
 
 if not OPENAI_API_KEY:
-    raise ValueError("OPENAI_API_KEY is not set in .env")
+    raise ValueError("OPENAI_API_KEY not set in .env")
 if not NEWS_API_KEY:
-    raise ValueError("NEWS_API_KEY is not set in .env")
+    raise ValueError("NEWS_API_KEY not set in .env")
+if not SMTP_USER or not SMTP_PASS:
+    raise ValueError("SMTP_USER or SMTP_PASS not set in .env")
 
 client = OpenAI(api_key=OPENAI_API_KEY)
+app = FastAPI(title="Smart News Summarizer with Email")
 NEWS_API_URL = "https://newsapi.org/v2/everything"
 
-app = FastAPI(title="Smart News Summarizer")
+class NewsRequest(BaseModel):
+    topics: str         # comma-separated topics
+    date: str           # YYYY-MM-DD format
+    email: EmailStr     # destination email
 
-class ChatRequest(BaseModel):
-    message: str
+def send_email(subject: str, body: str, to_email: str):
+    server = smtplib.SMTP_SSL(os.getenv("SMTP_HOST"), int(os.getenv("SMTP_PORT")))
+    server.login(os.getenv("SMTP_USER"), os.getenv("SMTP_PASS"))
+    msg = MIMEMultipart()
+    msg["From"] = os.getenv("SMTP_USER")
+    msg["To"] = to_email
+    msg["Subject"] = subject
+    msg.attach(MIMEText(body, "html"))
+    server.sendmail(os.getenv("SMTP_USER"), to_email, msg.as_string())
+    server.quit()
 
-with open("system_prompt.txt", encoding="utf-8") as f:
-    SYSTEM_PROMPT = f.read()
+def fetch_news(topic: str, date: str, count: int):
+    try:
+        resp = requests.get(
+            NEWS_API_URL,
+            params={
+                "q": topic,
+                "apiKey": NEWS_API_KEY,
+                "pageSize": count,
+                "language": "en",
+                "from": date,
+                "to": date,
+                "sortBy": "publishedAt"
+            },
+            timeout=10
+        )
+        resp.raise_for_status()
+        return resp.json().get("articles", [])
+    except requests.exceptions.Timeout:
+        return []
+    except Exception:
+        return []
 
-@app.post("/smart-news")
-def smart_news(req: ChatRequest):
-    user_message = req.message
-    final_output = ""
+def summarize_articles(articles):
+    news_list_text = "\n\n".join(
+        f"Title: {art['title']}\nDate: {art.get('publishedAt','')}\nContent: {art.get('content', '')}\nLink: {art.get('url', '')}"
+        for art in articles
+    )
+
+    if not news_list_text.strip():
+        return "No news found for this topic/date."
 
     try:
-        analysis_resp = client.chat.completions.create(
+        summary_resp = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": user_message}
+                {
+                    "role": "system",
+                    "content":
+                        "You are a helpful assistant. "
+                        "Summarize each news item in 2-3 sentences. "
+                        "Format result in HTML as:\n"
+                        "<h2>Title</h2>\n"
+                        "<p><b>Date:</b> YYYY-MM-DD</p>\n"
+                        "<p><b>Summary:</b> ...</p>\n"
+                        "<p><a href='link'>Read More</a></p>\n<hr>\n"
+                },
+                {"role": "user", "content": news_list_text}
             ]
         )
-
-        topics_count_text = analysis_resp.choices[0].message.content.strip()
-        topics_count_text = topics_count_text[topics_count_text.find("{"):topics_count_text.rfind("}")+1]
-        topics_count = json.loads(topics_count_text)
-
+        return summary_resp.choices[0].message.content.strip()
     except Exception as e:
-        print("Topic extraction error:", e)
-        topics_count = {"technology": 5}  # fallback
+        return f"Failed to summarize: {e}"
 
-    for topic_index, (topic, count) in enumerate(topics_count.items(), start=1):
-        final_output += f"=== Topic {topic_index}: {topic.upper()} ({count} news) ===\n\n"
+@app.post("/smart-news-email")
+def smart_news_email(req: NewsRequest):
+    topics_list = [t.strip() for t in req.topics.split(",") if t.strip()]
+    date = req.date
+    user_email = req.email
 
-        try:
-            response = requests.get(
-                NEWS_API_URL,
-                params={"q": topic, "apiKey": NEWS_API_KEY, "pageSize": count, "language": "en"},
-                timeout=10
-            )
-            response.raise_for_status()
-            articles = response.json().get("articles", [])
-        except requests.exceptions.Timeout:
-            final_output += f"Timeout while fetching news for '{topic}'\n\n"
-            continue
-        except Exception as e:
-            final_output += f"Failed to fetch news for '{topic}': {e}\n\n"
-            continue
+    email_body = f"<h1>Daily News Summary - {date}</h1>"
+    all_summaries = ""
 
-        if not articles:
-            final_output += "No news found.\n\n"
-            continue
+    for topic_index, topic in enumerate(topics_list, start=1):
+        articles = fetch_news(topic, date, count=5)  # default 5 per topic
+        summaries_html = summarize_articles(articles)
+        all_summaries += f"<h2>Topic {topic_index}: {topic.title()}</h2>\n" + summaries_html + "\n"
 
-        news_list_text = "\n\n".join(
-            f"Title: {art['title']}\nContent: {art.get('content', '')}\nLink: {art.get('url', '')}"
-            for art in articles
-        )
+    email_body += all_summaries
 
-        try:
-            summary_resp = client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[
-                    {
-                        "role": "system",
-                        "content": "You are a helpful assistant. Summarize each news item in 2-3 sentences. Format result in Markdown as:\n\n## Title\n**Summary:** ...\n[Read More](link)\n---\n"
-                    },
-                    {"role": "user", "content": news_list_text}
-                ]
-            )
-            summaries_text = summary_resp.choices[0].message.content.strip()
+    # Send the email
+    send_email(subject=f"Daily News Summary - {date}", body=email_body, to_email=user_email)
 
-        except Exception as e:
-            summaries_text = f"Failed to summarize: {e}"
-
-        final_output += summaries_text + "\n\n"
-
-    return {"news_text": final_output}
+    return {"status": "success", "message": f"News summary sent to {user_email}"}
