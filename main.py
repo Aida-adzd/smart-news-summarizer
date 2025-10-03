@@ -76,7 +76,6 @@ def smart_news(req: ChatRequest):
         )
 
         try:
-            # در بخش خلاصه‌سازی به جای فرمت ساده:
             summary_resp = client.chat.completions.create(
                 model="gpt-4o-mini",
                 messages=[
