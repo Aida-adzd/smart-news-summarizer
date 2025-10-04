@@ -72,14 +72,16 @@ def summarize_articles_impl(articles: List[Dict[str, Any]]) -> str:
          "content": (
              "You are a helpful assistant. "
              "Summarize each news item in 2-3 sentences. "
-             "Output clean HTML with this format:\n"
+             "Only return the HTML snippets for each news item, "
+             "without adding <html>, <head>, or <body> tags. "
+             "Use this format:\n"
              "<h2>Title</h2>\n"
              "<p><b>Date:</b> YYYY-MM-DD</p>\n"
              "<p><b>Summary:</b> ...</p>\n"
              "<p><a href='link'>Read More</a></p>\n"
              "<hr>\n"
          )
-        },
+         },
         {"role": "user", "content": news_text}
     ]
 
